@@ -1,11 +1,10 @@
 import os
-import aiosmtplib  # Asynchronous SMTP library
-import dns.asyncresolver  # Asynchronous DNS resolver from dnspython
+import smtplib  # For synchronous SMTP
+import dns.resolver  # For DNS resolution
 import logging
 from flask import Flask, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import asyncio
 
 app = Flask(__name__)
 
@@ -20,8 +19,8 @@ SENDER_EMAIL = os.getenv('SENDER_EMAIL', 'test@example.com')
 
 # API endpoint for email verification
 @app.route('/api/verify', methods=['POST'])
-@limiter.limit("32 per minute")
-async def api_verify():
+@limiter.limit("10 per minute")
+def api_verify():
     data = request.json
     if 'emails' not in data:
         return jsonify({'error': 'No emails provided'}), 400
@@ -29,36 +28,36 @@ async def api_verify():
     emails = data['emails']
     if not isinstance(emails, list):
         return jsonify({'error': 'Emails should be a list of strings'}), 400
-    
-    # Gather results asynchronously
-    results = await asyncio.gather(*(verify_email(email) for email in emails))
+
+    # Process email verification synchronously
+    results = [verify_email(email) for email in emails]
     return jsonify({'results': results})
 
-# Asynchronous email verification function
-async def verify_email(email):
+# Synchronous email verification function
+def verify_email(email):
     try:
         # Extract domain from email
         domain = email.split('@')[1]
     except IndexError:
         return f"Invalid email format: {email}"
     
-    # Get MX record asynchronously
-    mx_record = await get_mx_record(domain)
+    # Get MX record
+    mx_record = get_mx_record(domain)
     if not mx_record:
         return f"Failed to retrieve MX record for domain: {domain}"
-    
-    # Connect to SMTP server asynchronously
-    smtp_server = await connect_smtp(mx_record)
+
+    # Connect to SMTP server synchronously
+    smtp_server = connect_smtp(mx_record)
     if not smtp_server:
         return f"Failed to connect to SMTP server: {mx_record}"
-    
+
     try:
-        # Asynchronous SMTP transaction
-        await smtp_server.ehlo()
-        await smtp_server.mail(SENDER_EMAIL)
-        code, message = await smtp_server.rcpt(email)
-        await smtp_server.quit()
-        
+        # Synchronous SMTP transaction
+        smtp_server.ehlo()
+        smtp_server.mail(SENDER_EMAIL)
+        code, message = smtp_server.rcpt(email)
+        smtp_server.quit()
+
         if code == 250:
             return f"Email {email} is valid."
         else:
@@ -67,36 +66,34 @@ async def verify_email(email):
         logging.error(f"Error during SMTP transaction for {email}: {e}")
         return f"Error during SMTP transaction for {email}: {e}"
 
-# Asynchronous function to get MX record
-async def get_mx_record(domain):
+# Synchronous function to get MX record
+def get_mx_record(domain):
     try:
-        resolver = dns.asyncresolver.Resolver()
+        resolver = dns.resolver.Resolver()
         resolver.timeout = 5
         resolver.lifetime = 5
-        # Asynchronously resolve the MX record
-        records = await resolver.resolve(domain, 'MX')
+        # Synchronously resolve the MX record
+        records = resolver.resolve(domain, 'MX')
         mx_record = str(records[0].exchange)
         return mx_record
     except Exception as e:
         logging.error(f"DNS lookup failed for domain {domain}: {e}")
         return None
 
-# Asynchronous function to connect to the SMTP server
-async def connect_smtp(mx_record):
+# Synchronous function to connect to the SMTP server
+def connect_smtp(mx_record):
     try:
-        # Asynchronously connect to the SMTP server using aiosmtplib
-        smtp_server = aiosmtplib.SMTP(hostname=mx_record, port=25, timeout=10)
-        await smtp_server.connect()
-        await smtp_server.starttls()
+        # Synchronously connect to the SMTP server
+        smtp_server = smtplib.SMTP(host=mx_record, port=25, timeout=10)
+        smtp_server.starttls()  # Using TLS for encryption
         return smtp_server
     except Exception as e:
         logging.error(f"Failed to connect securely to SMTP server: {e}")
         return None
 
 if __name__ == '__main__':
-    # Run the Flask app asynchronously with debug off
-    app.run(debug=False, host='0.0.0.0')
-
+    # Run the Flask app synchronously with debug off
+    app.run(debug=False, host='0.0.0.0',)
 
 
 
